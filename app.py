@@ -1,312 +1,199 @@
-import os
-import sys
-import pandas as pd
-from text2sql import Text2SQL
-from text2viz import Text2Viz
-from dialogue_context import DialogueContext
-import re
+"""
+L'Oréal Data Insight Agent – Gradio UI
+
+A multi-tool AI agent for comprehensive data analysis, powered by a
+ReAct-style orchestrator inspired by Microsoft AutoGen.
+"""
+
 import logging
+import os
+
 import gradio as gr
 
-# 初始化实例
-text2sql = Text2SQL()
-text2viz = Text2Viz()
-dialogue_context = DialogueContext()
+from agent.data_agent import DataAnalysisAgent
+from utils.logger import setup_logging
+
+# Initialise agent
+agent = DataAnalysisAgent()
 
 
-# 检测是否是可视化请求的函数
-def is_visualization_query(query):
-    """检测查询是否是可视化请求"""
-    viz_keywords = [
-        "可视化", "图表", "图形", "绘制", "画图", "展示", "趋势", "变化",
-        "统计图", "柱状图", "折线图", "饼图", "直方图", "散点图", "分布图",
-        "visualize", "visualization", "chart", "plot", "graph", "trend", "变化情况"
-    ]
+# ------------------------------------------------------------------
+# Gradio interface
+# ------------------------------------------------------------------
+def create_interface():
+    with gr.Blocks(
+        title="L'Oréal 数据洞察 Agent",
+        theme=gr.themes.Soft(),
+        css=open("static/css/style.css").read(),
+    ) as interface:
 
-    # 检查查询中是否包含可视化关键词
-    for keyword in viz_keywords:
-        if keyword in query.lower():
-            return True
-    return False
+        # Header
+        gr.HTML("""
+        <div class="main-header">
+            <h1 style="margin:0;font-size:2rem;font-weight:700;">
+                L'Oréal 数据洞察 Agent
+            </h1>
+            <p style="margin:0.5rem 0 0;font-size:1rem;opacity:0.9;">
+                多工具智能数据分析 · 由 ReAct Agent 驱动
+            </p>
+        </div>
+        """)
 
-
-# 定义回调函数
-def process_query(message, history):
-    """处理用户查询并返回回答"""
-    if is_visualization_query(message):
-        # 使用Text2Viz处理可视化查询
-        df, viz_path = text2viz.visualize(message)
-
-        if viz_path and os.path.exists(viz_path):
-            # 生成数据摘要
-            summary = generate_data_summary(df)
-            # 返回带图片的回答 - 确保这里返回的是正确的格式
-            return [(message, (summary, viz_path))]
-        else:
-            # 可视化失败，使用Text2SQL回退
-            response = text2sql.query(message)
-            return [(message, response)]
-    else:
-        # 使用Text2SQL处理普通查询
-        response = text2sql.query(message)
-        return [(message, response)]
-
-
-# 生成数据摘要
-def generate_data_summary(df):
-    """生成数据摘要信息"""
-    if df.empty:
-        return "无法生成数据可视化，请尝试其他查询。"
-
-    summary = "以下是查询结果的可视化：\n\n"
-
-    # 添加基本统计信息
-    summary += f"数据包含 {len(df)} 行记录。\n"
-
-    # 根据数据类型添加更多统计信息
-    for col in df.columns:
-        if pd.api.types.is_datetime64_dtype(df[col]):
-            summary += f"• {col} 范围: {df[col].min().date()} 到 {df[col].max().date()}\n"
-        elif pd.api.types.is_numeric_dtype(df[col]):
-            summary += f"• {col} 统计: 总和={df[col].sum():.2f}, 平均值={df[col].mean():.2f}\n"
-
-    return summary
-
-
-# 创建Gradio界面
-def create_combined_interface():
-    """创建集成Text2SQL和Text2Viz的Gradio界面"""
-    # 使用外部CSS文件
-    custom_css = """
-    @import url('static/css/style.css');
-    """
-
-    with gr.Blocks(title="🔍 L'Oréal 数据洞察助手", theme=gr.themes.Soft(), css=custom_css) as interface:
-        # 主标题区域 - 紧凑设计
+        # Tool cards
         with gr.Row():
-            with gr.Column():
-                gr.HTML("""
-                <div class="main-header">
-                    <h1 style="margin: 0; font-size: 2rem; font-weight: 700;">🔍 L'Oréal 数据洞察助手</h1>
-                    <p style="margin: 0.5rem 0 0 0; font-size: 1rem; opacity: 0.9;">用对话替代 SQL，让数据分析触手可及</p>
-                </div>
-                """)
+            for icon, title, desc in [
+                ("🔍", "数据探查", "表结构 · 字段解读 · 数据概览"),
+                ("📊", "智能可视化", "折线 · 柱状 · 饼图 · 散点 · 热力图"),
+                ("📈", "统计分析", "描述统计 · 趋势 · 相关性 · Top-N"),
+                ("🧪", "数据画像", "缺失值 · 异常值 · 分布 · 质量评估"),
+                ("📝", "分析报告", "自动综合洞察 · 业务建议"),
+            ]:
+                with gr.Column(scale=1, min_width=120):
+                    gr.HTML(f"""
+                    <div class="feature-card" style="text-align:center;">
+                        <div style="font-size:1.6rem;">{icon}</div>
+                        <h4 style="margin:0.3rem 0;font-size:0.95rem;">{title}</h4>
+                        <p style="margin:0;font-size:0.78rem;opacity:0.8;">{desc}</p>
+                    </div>
+                    """)
 
-        # 功能介绍卡片 - 简洁设计
+        # Chat + detail panel
         with gr.Row():
-            with gr.Column(scale=1):
-                gr.HTML("""
-                <div class="feature-card">
-                    <h3 style="margin-top: 0; margin-bottom: 0.5rem; font-size: 1.1rem;">💎 智能查询</h3>
-                    <p style="margin: 0; font-size: 0.9rem;">自然语言转SQL，智能数据查询</p>
-                </div>
-                """)
-            with gr.Column(scale=1):
-                gr.HTML("""
-                <div class="feature-card">
-                    <h3 style="margin-top: 0; margin-bottom: 0.5rem; font-size: 1.1rem;">📊 数据可视化</h3>
-                    <p style="margin: 0; font-size: 0.9rem;">多样图表类型，直观数据展示</p>
-                </div>
-                """)
-            with gr.Column(scale=1):
-                gr.HTML("""
-                <div class="feature-card">
-                    <h3 style="margin-top: 0; margin-bottom: 0.5rem; font-size: 1.1rem;">🎯 智能洞察</h3>
-                    <p style="margin: 0; font-size: 0.9rem;">深度分析，专业商业洞察</p>
-                </div>
-                """)
-
-        # 主要交互区域
-        with gr.Row():
-            with gr.Column(scale=2):
-                # 聊天组件 - 紧凑设计
+            with gr.Column(scale=3):
                 chatbot = gr.Chatbot(
-                    height=400,
-                    label="💬 对话历史",
-                    type="messages"
+                    height=480,
+                    label="对话",
+                    type="messages",
+                    show_copy_button=True,
                 )
-
-                # 输入区域 - 紧凑设计
                 with gr.Group():
                     msg = gr.Textbox(
-                        placeholder="💭 请输入您的数据查询问题...",
-                        label="",
+                        placeholder="请输入您的数据分析问题…",
+                        show_label=False,
                         lines=2,
                         max_lines=4,
-                        show_label=False,
-                        container=False
+                        container=False,
                     )
                     with gr.Row():
-                        submit_btn = gr.Button(
-                            "🚀 发送查询",
-                            variant="primary",
-                            scale=1
-                        )
-                        clear_btn = gr.Button(
-                            "🗑️ 清空对话",
-                            variant="secondary",
-                            scale=1
-                        )
+                        submit_btn = gr.Button("发送", variant="primary", scale=2)
+                        clear_btn = gr.Button("清空对话", variant="secondary", scale=1)
 
-            with gr.Column(scale=1):
-                # 技术详情面板
-                with gr.Accordion("🔧 技术详情", open=False):
-                    sql_display = gr.Textbox(
-                        label="📝 生成的SQL查询",
-                        lines=6,
+            with gr.Column(scale=1, min_width=260):
+                with gr.Accordion("Agent 工作台", open=True):
+                    status_display = gr.Markdown("等待查询…")
+                with gr.Accordion("工具调用日志", open=False):
+                    tool_log = gr.Textbox(
+                        label="",
+                        lines=12,
                         interactive=False,
-                        placeholder="SQL查询将在这里显示..."
+                        show_label=False,
                     )
-                    result_display = gr.Textbox(
-                        label="📋 数据库返回结果",
-                        lines=10,
-                        interactive=False,
-                        placeholder="查询结果将在这里显示..."
+                with gr.Accordion("已注册工具", open=False):
+                    tools_info = gr.Markdown(
+                        _format_tools_info(agent.get_available_tools())
                     )
 
-        # 示例查询区域 - 优化设计
+        # Example queries
         with gr.Row():
-            with gr.Column():
-                pass
-
-                # 示例查询 - 保留必要示例
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.HTML(
-                            "<h4 style='margin-bottom: 1rem; color: var(--loreal-gold); font-size: 1.1rem;'>💎 精准查询</h4>")
-                        gr.Examples(
-                            examples=[
-                                "查询订单号3c5db3f9729998569150adceca0fc0ad的详细信息",
-                                "显示2024-10-30这天的所有订单信息",
-                                "查询'芝麻开门男士滋养紧致眼部精华露'的所有销售记录",
-                                "统计每个产品在10月份的销售总额和销售数量"
-                            ],
-                            inputs=msg
-                        )
-
-                    with gr.Column(scale=1):
-                        gr.HTML(
-                            "<h4 style='margin-bottom: 1rem; color: var(--loreal-gold); font-size: 1.1rem;'>🎨 视觉呈现</h4>")
-                        gr.Examples(
-                            examples=[
-                                "绘制2024年10月21日到10月30日的每日销售额趋势图",
-                                "可视化展示芝麻开门男士滋养紧致眼部精华露2024年10月的销量变化趋势",
-                                "绘制各销售渠道的销售额占比饼图",
-                                "展示销售额前15的城市销售情况"
-                            ],
-                            inputs=msg
-                        )
-
-                    with gr.Column(scale=1):
-                        gr.HTML(
-                            "<h4 style='margin-bottom: 1rem; color: var(--loreal-gold); font-size: 1.1rem;'>🔮 智慧洞察</h4>")
-                        gr.Examples(
-                            examples=[
-                                "显示苏州狮山天街店铺的所有交易记录",
-                                "统计江苏省苏州市的所有销售数据",
-                                "查询一线城市的销售情况",
-                                "展示不同城市等级的销售额对比柱状图"
-                            ],
-                            inputs=msg
-                        )
-
-        # 定义回调函数
-        def user_input(user_message, history):
-            # 处理用户输入 - 使用messages格式
-            return "", history + [{"role": "user", "content": user_message}]
-
-        # 定义回调函数
-        def bot_response(history):
-            # 获取最后一条用户消息
-            user_message = history[-1]["content"]
-
-            # 获取对话上下文
-            context = dialogue_context.get_context_window()
-            
-            # 使用LLM判断对话类型并获取回答
-            conv_type, answer = text2sql.llm.classify_conversation(user_message)
-
-            # 记录用户消息到上下文
-            dialogue_context.add_message(
-                role="user",
-                content=user_message,
-                metadata={"type": conv_type}
-            )
-
-            # 如果是普通对话，直接返回回答
-            if conv_type == "general":
-                dialogue_context.add_message(
-                    role="assistant",
-                    content=answer,
-                    metadata={"type": "general_response"}
+            with gr.Column(scale=1):
+                gr.HTML("<h4 style='color:var(--loreal-gold);'>🔍 数据探查</h4>")
+                gr.Examples(
+                    [
+                        "帮我查看一下数据库有哪些表和字段",
+                        "分析一下数据整体质量如何",
+                    ],
+                    inputs=msg,
                 )
-                history.append({"role": "assistant", "content": answer})
-                return history, "", ""
+            with gr.Column(scale=1):
+                gr.HTML("<h4 style='color:var(--loreal-gold);'>📊 可视化分析</h4>")
+                gr.Examples(
+                    [
+                        "绘制2024年10月21日到10月30日的每日销售额趋势图",
+                        "展示各销售渠道的销售额占比饼图",
+                        "展示销售额前15的城市销售情况柱状图",
+                    ],
+                    inputs=msg,
+                )
+            with gr.Column(scale=1):
+                gr.HTML("<h4 style='color:var(--loreal-gold);'>📈 深度分析</h4>")
+                gr.Examples(
+                    [
+                        "统计每个产品在10月份的销售总额和销售数量",
+                        "分析各省份的销售额排名和同比情况",
+                        "对销售数据做全面的统计分析并生成报告",
+                    ],
+                    inputs=msg,
+                )
 
-            # 如果是数据查询，继续原有的处理逻辑
-            if is_visualization_query(user_message):
-                # 处理可视化查询
-                df, viz_path, sql_query = text2viz.visualize(user_message)
+        # ---- callbacks ------------------------------------------------
+        def on_user_submit(user_message, history):
+            history = history or []
+            history.append({"role": "user", "content": user_message})
+            return "", history
 
-                if viz_path and os.path.exists(viz_path):
-                    summary = generate_data_summary(df)
-                    db_result = df.head(10).to_string(index=False) if not df.empty else "无数据"
+        def on_bot_response(history):
+            user_message = history[-1]["content"]
+            status = "**正在分析…** 🔄\n\nAgent 正在规划并执行工具链…"
 
-                    # 添加文本摘要回复
-                    history.append({"role": "assistant", "content": summary})
+            yield history, status, ""
 
-                    # 追加图片消息
-                    history.append({"role": "assistant", "content": {"path": viz_path}})
+            result = agent.process_query(user_message)
+            response = result["response"]
+            images = result.get("images", [])
+            tool_results = result.get("tool_results", [])
 
-                    return history, sql_query, db_result
-                else:
-                    # 可视化失败，使用Text2SQL回退
-                    response, sql_query, db_result = text2sql.query(user_message)
-                    # 添加文本回复
-                    history.append({"role": "assistant", "content": response})
-                    return history, sql_query, db_result
-            else:
-                # 处理普通文本查询
-                response, sql_query, db_result = text2sql.query(user_message)
-                # 添加回复
-                history.append({"role": "assistant", "content": response})
-                return history, sql_query, db_result
+            log_lines = []
+            for i, tr in enumerate(tool_results, 1):
+                success = "✅" if tr.get("success") else "❌"
+                log_lines.append(
+                    f"[{i}] {success} {tr.get('tool', '?')} — {tr.get('reason', '')}"
+                )
+            log_text = "\n".join(log_lines) if log_lines else "无工具调用"
 
-        # 清空对话功能
-        def clear_conversation():
-            return [], "", "", ""
+            history.append({"role": "assistant", "content": response})
 
-        # 设置事件处理
-        msg.submit(user_input, [msg, chatbot], [msg, chatbot], queue=False).then(
-            bot_response, chatbot, [chatbot, sql_display, result_display]
+            for img in images:
+                if img and os.path.exists(img):
+                    history.append({"role": "assistant", "content": {"path": img}})
+
+            tools_used = [tr.get("tool") for tr in tool_results]
+            status = (
+                f"**分析完成** ✅\n\n"
+                f"- 调用工具 {len(tool_results)} 个\n"
+                f"- 工具链: {' → '.join(tools_used) if tools_used else '无'}\n"
+                f"- 生成图表 {len(images)} 张"
+            )
+            yield history, status, log_text
+
+        def on_clear():
+            agent.clear_context()
+            return [], "", "等待查询…", ""
+
+        msg.submit(on_user_submit, [msg, chatbot], [msg, chatbot], queue=False).then(
+            on_bot_response, chatbot, [chatbot, status_display, tool_log]
         )
-        submit_btn.click(user_input, [msg, chatbot], [msg, chatbot], queue=False).then(
-            bot_response, chatbot, [chatbot, sql_display, result_display]
+        submit_btn.click(on_user_submit, [msg, chatbot], [msg, chatbot], queue=False).then(
+            on_bot_response, chatbot, [chatbot, status_display, tool_log]
         )
         clear_btn.click(
-            clear_conversation,
-            outputs=[chatbot, msg, sql_display, result_display]
+            on_clear, outputs=[chatbot, msg, status_display, tool_log]
         )
 
     return interface
 
 
-# 主函数
-# 修改main函数中的日志配置
-def main():
-    # 设置基本日志级别 - 只在控制台显示INFO级别以上的日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler()
-        ]
-    )
-    logging.info("=== 应用启动 ===")
+def _format_tools_info(tools):
+    lines = []
+    for t in tools:
+        lines.append(f"**{t['name']}**\n{t['description']}\n")
+    return "\n".join(lines)
 
-    # 创建界面
-    interface = create_combined_interface()
-    # 启动服务
+
+# ------------------------------------------------------------------
+def main():
+    setup_logging()
+    logging.info("=== L'Oréal Data Insight Agent 启动 ===")
+    interface = create_interface()
     interface.launch(share=False)
 
 
